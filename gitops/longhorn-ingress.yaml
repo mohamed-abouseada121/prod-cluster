@@ -1,0 +1,49 @@
+# ==============================================================================
+# Istio Ingress Gateway & Routing for Longhorn UI (syntera-longhorn.obelion.ai)
+# ==============================================================================
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: longhorn-gateway
+  namespace: longhorn-system
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "syntera-longhorn.obelion.ai"
+      tls:
+        httpsRedirect: true
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: obelion-ai-wildcard-tls
+      hosts:
+        - "syntera-longhorn.obelion.ai"
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: longhorn-ui
+  namespace: longhorn-system
+spec:
+  hosts:
+    - "syntera-longhorn.obelion.ai"
+  gateways:
+    - longhorn-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: longhorn-frontend.longhorn-system.svc.cluster.local
+            port:
+              number: 80
