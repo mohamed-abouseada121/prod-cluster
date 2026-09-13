@@ -1,0 +1,49 @@
+global:
+  enabled: true
+  tlsDisable: true
+
+injector:
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  nodeSelector:
+    node-role.kubernetes.io/worker: worker
+
+server:
+  dev:
+    enabled: false
+  dataStorage:
+    enabled: true
+    size: 20Gi
+    storageClass: longhorn
+    accessMode: ReadWriteOnce
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1024Mi
+  nodeSelector:
+    node-role.kubernetes.io/worker: worker
+  standalone:
+    enabled: true
+    config: |
+      ui = true
+      listener "tcp" {
+        tls_disable = 1
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+      storage "file" {
+        path = "/vault/data"
+      }
+      disable_mlock = true
+
+ui:
+  enabled: true

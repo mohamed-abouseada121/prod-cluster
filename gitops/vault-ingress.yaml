@@ -1,0 +1,49 @@
+# ==============================================================================
+# Istio Ingress Gateway & Routing for Vault UI (syntera-vault.obelion.ai)
+# ==============================================================================
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: vault-gateway
+  namespace: vault
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "syntera-vault.obelion.ai"
+      tls:
+        httpsRedirect: true
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: obelion-ai-wildcard-tls
+      hosts:
+        - "syntera-vault.obelion.ai"
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: vault-ui
+  namespace: vault
+spec:
+  hosts:
+    - "syntera-vault.obelion.ai"
+  gateways:
+    - vault-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: vault.vault.svc.cluster.local
+            port:
+              number: 8200
