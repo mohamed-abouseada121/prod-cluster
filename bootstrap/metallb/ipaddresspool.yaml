@@ -1,0 +1,10 @@
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: syntera-prod-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 10.73.31.96-10.73.31.97
+  autoAssign: true
+  avoidBuggyIPs: false

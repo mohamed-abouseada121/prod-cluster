@@ -1,0 +1,129 @@
+# ==============================================================================
+# ArgoCD High Availability (HA) Production Values
+# ==============================================================================
+global:
+  nodeSelector:
+    node-role.kubernetes.io/worker: worker
+
+## Redis HA Configuration (Master-Replica with Sentinel)
+redis-ha:
+  enabled: true
+  replicas: 3
+  hardAntiAffinity: true
+  nodeSelector:
+    node-role.kubernetes.io/worker: worker
+  redis:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 300m
+        memory: 256Mi
+  sentinel:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+## Standalone Redis Disabled in favor of Redis-HA
+redis:
+  enabled: false
+
+## ArgoCD Controller (Core Engine)
+controller:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1024Mi
+    limits:
+      cpu: 2000m
+      memory: 2048Mi
+  nodeSelector:
+    node-role.kubernetes.io/worker: worker
+
+## ArgoCD API Server
+server:
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  nodeSelector:
+    node-role.kubernetes.io/worker: worker
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - argocd-server
+            topologyKey: kubernetes.io/hostname
+
+## ArgoCD Repository Server (Manifest Generator)
+repoServer:
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1024Mi
+  nodeSelector:
+    node-role.kubernetes.io/worker: worker
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - argocd-repo-server
+            topologyKey: kubernetes.io/hostname
+
+## ArgoCD ApplicationSet Controller
+applicationSet:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  nodeSelector:
+    node-role.kubernetes.io/worker: worker
+
+## Notification Controller
+notifications:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi

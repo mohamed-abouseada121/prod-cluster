@@ -1,0 +1,75 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: longhorn
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: 'https://charts.longhorn.io'
+    chart: longhorn
+    targetRevision: 1.8.1
+    helm:
+      values: |
+        global:
+          nodeSelector:
+            node-role.kubernetes.io/worker: worker
+        persistence:
+          defaultClass: true
+          defaultFsType: ext4
+          defaultClassReplicaCount: 3
+          defaultDataLocality: disabled
+          reclaimPolicy: Delete
+        defaultSettings:
+          defaultReplicaCount: 3
+          replicaAutoBalance: best-effort
+          storageOverProvisioningPercentage: 200
+          storageMinimalAvailablePercentage: 15
+          upgradeChecker: false
+          defaultDataPath: /var/lib/longhorn
+          replicaSoftAntiAffinity: false
+          replicaDiskSoftAntiAffinity: false
+          autoSalvage: true
+          disableRevisionCounter: true
+          systemManagedPodsImagePullPolicy: IfNotPresent
+          allowVolumeCreationWithDegradedAvailability: false
+          autoCleanupSystemGeneratedSnapshot: true
+        longhornManager:
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1024Mi
+          nodeSelector:
+            node-role.kubernetes.io/worker: worker
+        longhornDriver:
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+        longhornUI:
+          replicas: 2
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: longhorn-system
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
