@@ -1,0 +1,37 @@
+# ==============================================================================
+# ClusterIssuers: Obelion and Syntera ACME Cloudflare DNS-01 Solvers
+# ==============================================================================
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-cloudflare
+spec:
+  acme:
+    email: YOUR_EMAIL@obelion.ai
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-cloudflare-account-key
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: syntera-dns-issuer
+spec:
+  acme:
+    email: YOUR_EMAIL@obelion.ai
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-dns-issuer-account-key
+    solvers:
+      - dns01:
+          cloudflare:
+            email: YOUR_EMAIL@obelion.ai
+            apiTokenSecretRef:
+              name: cloudflare-api-token-syntera
+              key: api-token
