@@ -8,9 +8,26 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: 'https://github.com/Obelion-ai/swe_syntera.git'
-    targetRevision: main
-    path: k8s/arc/prod
+    repoURL: 'ghcr.io/actions/actions-runner-controller-charts'
+    chart: gha-runner-scale-set
+    targetRevision: 0.14.2
+    helm:
+      releaseName: swe-prod
+      values: |
+        githubConfigUrl: "https://github.com/Obelion-ai/swe_syntera"
+        githubConfigSecret: "arc-github-secret"
+        runnerScaleSetName: "swe-prod"
+        minRunners: 0
+        maxRunners: 3
+        containerMode:
+          type: "dind"
+        controllerServiceAccount:
+          namespace: arc-systems
+          name: arc-controller
+        template:
+          spec:
+            nodeSelector:
+              node-role.kubernetes.io/worker: worker
   destination:
     server: 'https://kubernetes.default.svc'
     namespace: arc-runners
