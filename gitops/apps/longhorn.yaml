@@ -16,6 +16,8 @@ spec:
         global:
           nodeSelector:
             node-role.kubernetes.io/worker: worker
+        preUpgradeChecker:
+          jobEnabled: false
         persistence:
           defaultClass: true
           defaultFsType: ext4
