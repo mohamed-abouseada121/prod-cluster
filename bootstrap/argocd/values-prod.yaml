@@ -127,3 +127,8 @@ notifications:
     limits:
       cpu: 200m
       memory: 256Mi
+
+## ArgoCD Configurations
+configs:
+  cm:
+    kustomize.buildOptions: "--enable-helm"
