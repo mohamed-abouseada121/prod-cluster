@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: swe-arc-runner
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/Obelion-ai/swe_syntera.git'
+    targetRevision: main
+    path: k8s/arc/prod
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: arc-runners
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

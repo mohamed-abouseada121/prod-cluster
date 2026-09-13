@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: arc-controller
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: 'ghcr.io/actions/actions-runner-controller-charts'
+    chart: gha-runner-scale-set-controller
+    targetRevision: 0.14.2
+    helm:
+      values: |
+        serviceAccount:
+          create: true
+          name: arc-controller
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        nodeSelector:
+          node-role.kubernetes.io/worker: worker
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: arc-systems
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
