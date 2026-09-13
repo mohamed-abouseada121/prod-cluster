@@ -8,9 +8,9 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: 'https://github.com/Obelion-ai/swe_syntera.git'
+    repoURL: 'https://github.com/mohamed-abouseada121/prod-cluster.git'
     targetRevision: main
-    path: k8s/syntera-db/overlays/prod
+    path: gitops/syntera-db
   destination:
     server: 'https://kubernetes.default.svc'
     namespace: syntera-db
