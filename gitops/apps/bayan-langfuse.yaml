@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bayan-langfuse
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: 'https://langfuse.github.io/langfuse-k8s'
+      chart: langfuse
+      targetRevision: 2.1.0
+      helm:
+        valueFiles:
+          - $values/k8s/helm/langfuse-prod-values.yaml
+    - repoURL: 'https://github.com/Obelion-ai/Bayan.git'
+      targetRevision: main
+      ref: values
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: langfuse-bayan
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
