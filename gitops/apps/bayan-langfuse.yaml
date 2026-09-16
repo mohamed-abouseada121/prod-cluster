@@ -15,7 +15,7 @@ spec:
         valueFiles:
           - $values/k8s/helm/langfuse-prod-values.yaml
     - repoURL: 'https://github.com/Obelion-ai/Bayan.git'
-      targetRevision: main
+      targetRevision: prod
       ref: values
   destination:
     server: 'https://kubernetes.default.svc'

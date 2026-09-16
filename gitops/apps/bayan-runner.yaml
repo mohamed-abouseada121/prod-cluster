@@ -1,0 +1,40 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bayan-arc-runner
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: 'ghcr.io/actions/actions-runner-controller-charts'
+    chart: gha-runner-scale-set
+    targetRevision: 0.14.2
+    helm:
+      releaseName: bayan-prod
+      values: |
+        githubConfigUrl: "https://github.com/Obelion-ai/Bayan"
+        githubConfigSecret: "arc-bayan-secret"
+        runnerScaleSetName: "bayan-prod"
+        minRunners: 0
+        maxRunners: 3
+        containerMode:
+          type: "dind"
+        controllerServiceAccount:
+          namespace: arc-systems
+          name: arc-controller
+        template:
+          spec:
+            nodeSelector:
+              node-role.kubernetes.io/worker: worker
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: arc-runners
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
