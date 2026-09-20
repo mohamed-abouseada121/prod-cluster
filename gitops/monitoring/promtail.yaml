@@ -108,6 +108,7 @@ spec:
           image: grafana/promtail:3.4.2
           args:
             - -config.file=/etc/promtail/promtail.yaml
+            - -config.expand-env=true
           env:
             - name: HOSTNAME
               valueFrom:
