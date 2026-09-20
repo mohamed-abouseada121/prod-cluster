@@ -86,6 +86,7 @@ spec:
       labels:
         app.kubernetes.io/name: kube-state-metrics
     spec:
+      hostNetwork: true
       serviceAccountName: kube-state-metrics
       containers:
         - name: kube-state-metrics
@@ -93,6 +94,7 @@ spec:
           ports:
             - name: http-metrics
               containerPort: 8080
+              hostPort: 8080
             - name: telemetry
               containerPort: 8081
           resources:

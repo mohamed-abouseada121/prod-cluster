@@ -31,8 +31,10 @@ rules:
       - nodes/metrics
       - nodes/proxy
       - services
+      - services/proxy
       - endpoints
       - pods
+      - pods/proxy
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
     resources:
