@@ -36,8 +36,9 @@ spec:
           autoSalvage: true
           disableRevisionCounter: true
           systemManagedPodsImagePullPolicy: IfNotPresent
-          allowVolumeCreationWithDegradedAvailability: false
           autoCleanupSystemGeneratedSnapshot: true
+          backupTarget: s3://obelion-prod-cluster-backups@us-east-1/longhorn/
+          backupTargetCredentialSecret: longhorn-backup-secret
         longhornManager:
           resources:
             requests:
