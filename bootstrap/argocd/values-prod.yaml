@@ -132,3 +132,7 @@ notifications:
 configs:
   cm:
     kustomize.buildOptions: "--enable-helm"
+    accounts.obeliondev: login
+  rbac:
+    policy.csv: |
+      g, obeliondev, role:readonly
