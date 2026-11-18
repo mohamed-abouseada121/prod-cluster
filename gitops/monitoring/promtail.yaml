@@ -46,7 +46,7 @@ data:
       filename: /run/promtail/positions.yaml
 
     clients:
-      - url: http://10.73.31.97:3100/loki/api/v1/push
+      - url: http://188.248.254.159:3100/loki/api/v1/push
         batchsize: 1048576
         batchwait: 1s
 
