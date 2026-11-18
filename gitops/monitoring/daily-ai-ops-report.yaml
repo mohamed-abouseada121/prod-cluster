@@ -1,0 +1,376 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ai-ops-reporter-sa
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: ops-reporter
+    app.kubernetes.io/part-of: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ai-ops-reporter-role
+rules:
+  - apiGroups: [""]
+    resources: ["events", "pods", "nodes", "namespaces", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ai-ops-reporter-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ai-ops-reporter-role
+subjects:
+  - kind: ServiceAccount
+    name: ai-ops-reporter-sa
+    namespace: monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: syntera-ai-ops-script
+  namespace: monitoring
+data:
+  reporter.py: |
+    #!/usr/bin/env python3
+    import os
+    import sys
+    import json
+    import time
+    import ssl
+    import urllib.request
+    import urllib.error
+    from datetime import datetime, timezone, timedelta
+
+    AI_BASE_URL = os.getenv("AI_BASE_URL", "https://inference.obelion.ai/v1").rstrip("/")
+    AI_API_KEY = os.getenv("AI_API_KEY", "")
+    AI_MODEL = os.getenv("AI_MODEL", "glm-5-3-flash")
+    DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL", "")
+    PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://188.248.254.159:8428").rstrip("/")
+    LOKI_URL = os.getenv("LOKI_URL", "http://188.248.254.159:3100").rstrip("/")
+
+    SSL_CTX = ssl.create_default_context()
+    SSL_CTX.check_hostname = False
+    SSL_CTX.verify_mode = ssl.CERT_NONE
+
+    def fetch_json(url, headers=None, timeout=25):
+        if headers is None:
+            headers = {}
+        headers.setdefault("User-Agent", "SynteraOps/1.0")
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout, context=SSL_CTX) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            print(f"[WARN] Failed GET {url}: {e}", file=sys.stderr)
+            return None
+
+    def post_json(url, payload, headers=None, timeout=60):
+        if headers is None:
+            headers = {}
+        headers.setdefault("User-Agent", "SynteraOps/1.0")
+        headers.setdefault("Content-Type", "application/json")
+        data_bytes = json.dumps(payload).encode("utf-8")
+        try:
+            req = urllib.request.Request(url, data=data_bytes, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout, context=SSL_CTX) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            print(f"[ERROR] HTTP {e.code} on POST {url}: {err_body}", file=sys.stderr)
+            return e.code, err_body
+        except Exception as e:
+            print(f"[ERROR] Exception on POST {url}: {e}", file=sys.stderr)
+            return 0, str(e)
+
+    def query_prometheus(query):
+        url = f"{PROMETHEUS_URL}/api/v1/query?query={urllib.parse.quote(query)}"
+        res = fetch_json(url)
+        if res and res.get("status") == "success":
+            return res.get("data", {}).get("result", [])
+        return []
+
+    def query_loki(logql, limit=150):
+        # Query logs over the last 24h
+        now_ns = int(time.time() * 1e9)
+        start_ns = now_ns - int(24 * 3600 * 1e9)
+        url = f"{LOKI_URL}/loki/api/v1/query_range?query={urllib.parse.quote(logql)}&start={start_ns}&end={now_ns}&limit={limit}"
+        res = fetch_json(url, timeout=35)
+        lines = []
+        if res and res.get("status") == "success":
+            results = res.get("data", {}).get("result", [])
+            for stream in results:
+                stream_labels = stream.get("stream", {})
+                ns = stream_labels.get("namespace", "unknown")
+                pod = stream_labels.get("pod", stream_labels.get("container", "unknown"))
+                for entry in stream.get("values", []):
+                    ts, log_line = entry[0], entry[1]
+                    lines.append(f"[{ns}/{pod}] {log_line.strip()}")
+        return lines
+
+    def get_k8s_events():
+        token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        if not os.path.exists(token_path):
+            return []
+        with open(token_path, "r") as f:
+            token = f.read().strip()
+        headers = {"Authorization": f"Bearer {token}"}
+        k8s_url = "https://kubernetes.default.svc/api/v1/events"
+        res = fetch_json(k8s_url, headers=headers)
+        events = []
+        if res and "items" in res:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            for item in res["items"]:
+                if item.get("type") == "Warning":
+                    last_ts = item.get("lastTimestamp") or item.get("eventTime")
+                    ev_info = {
+                        "namespace": item.get("metadata", {}).get("namespace", ""),
+                        "reason": item.get("reason", ""),
+                        "message": item.get("message", ""),
+                        "object": f"{item.get('involvedObject', {}).get('kind')}/{item.get('involvedObject', {}).get('name')}",
+                        "count": item.get("count", 1)
+                    }
+                    events.append(ev_info)
+        return events
+
+    def collect_telemetry():
+        print("[INFO] Collecting telemetry from Prometheus, Loki, and K8s...")
+        data = {}
+
+        # 1. Pod Restarts over 24h
+        restarts = query_prometheus('sum(increase(kube_pod_container_status_restarts_total[24h])) by (namespace, pod) > 0')
+        data["pod_restarts"] = [
+            {"namespace": r["metric"].get("namespace"), "pod": r["metric"].get("pod"), "restarts": float(r["value"][1])}
+            for r in restarts
+        ]
+
+        # 2. OOMKilled Containers
+        oom = query_prometheus('sum(kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}) by (namespace, pod) > 0')
+        data["oom_killed"] = [
+            {"namespace": r["metric"].get("namespace"), "pod": r["metric"].get("pod"), "count": int(float(r["value"][1]))}
+            for r in oom
+        ]
+
+        # 3. Node Resource Usage Peaks (CPU & RAM)
+        node_cpu = query_prometheus('max_over_time((1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) by (instance))[24h:15m]) * 100')
+        node_mem = query_prometheus('max_over_time(((1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100)[24h:15m])')
+        data["node_peaks"] = []
+        for c in node_cpu:
+            inst = c["metric"].get("instance")
+            cpu_val = round(float(c["value"][1]), 1)
+            mem_val = 0.0
+            for m in node_mem:
+                if m["metric"].get("instance") == inst:
+                    mem_val = round(float(m["value"][1]), 1)
+                    break
+            data["node_peaks"].append({"instance": inst, "peak_cpu_pct": cpu_val, "peak_mem_pct": mem_val})
+
+        # 4. Storage & PVC Filling Status
+        pvc = query_prometheus('(kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes) * 100 < 30')
+        data["pvc_pressure"] = [
+            {"namespace": p["metric"].get("namespace"), "pvc": p["metric"].get("persistentvolumeclaim"), "free_pct": round(float(p["value"][1]), 1)}
+            for p in pvc
+        ]
+
+        # 5. Active / Firing Alerts history
+        alerts = query_prometheus('ALERTS{environment="dev", alertstate="firing"}')
+        data["active_alerts"] = [
+            {"alertname": a["metric"].get("alertname"), "severity": a["metric"].get("severity"), "summary": a["metric"].get("summary", a["metric"].get("alertname"))}
+            for a in alerts
+        ]
+
+        # 6. Kubernetes Warning Events (last 24h)
+        events = get_k8s_events()
+        # Deduplicate events by reason + object
+        dedup_events = {}
+        for ev in events:
+            key = f"{ev['namespace']}:{ev['object']}:{ev['reason']}"
+            if key not in dedup_events:
+                dedup_events[key] = ev
+            else:
+                dedup_events[key]["count"] += ev.get("count", 1)
+        data["k8s_warning_events"] = list(dedup_events.values())[:50]
+
+        # 7. Loki Error Logs & Exceptions (Up to 150 sampled lines with stack traces)
+        logql = '{namespace=~"bayan-prod|swe-syntera-prod|syntera-marketplace-prod|agentic-builder-prod|syntera-db|monitoring"} |~ "(?i)error|exception|traceback|panic|failed"'
+        data["sample_error_logs"] = query_loki(logql, limit=150)
+
+        return data
+
+    def generate_ai_report(telemetry_data):
+        print(f"[INFO] Sending telemetry to {AI_MODEL} on {AI_BASE_URL}...")
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        
+        system_prompt = (
+            "You are a Principal Site Reliability Engineer (SRE) and DevOps Architect at Syntera / Obelion. "
+            "You analyze Kubernetes cluster operational telemetry, Prometheus metrics, and Loki log traces over the last 24 hours. "
+            "Generate an executive and deeply technical Daily Operations Digest in clean, professional Arabic with engineering terms in English. "
+            "Use clear Markdown formatting with emojis, bold highlights, and structured sections:\n"
+            "1. 📊 **الملخص التنفيذي والحالة العامة (Executive Health & Status)**: إعطاء تقييم شامل (🟢 ممتاز / 🟡 يحتاج متابعة / 🔴 حرج).\n"
+            "2. 🚨 **الأخطاء الحرجة وسجلات الـ Exceptions والتحليل الجذري (RCA)**: تفصيل الأخطاء التي ظهرت في سجلات الـ Backend و ClickHouse و MongoDB مع ربط الأسباب.\n"
+            "3. 📈 **استهلاك الموارد والـ Spikes**: قفزات الرام والـ CPU على النودز.\n"
+            "4. 💾 **حالة التخزين والـ PVCs**: الأقراص الممتلئة أو التي قاربت على الامتلاء.\n"
+            "5. 🔄 **انهيارات الحاويات (Restarts & OOMKilled)**: الحاويات غير المستقرة.\n"
+            "6. 💡 **توصيات الذكاء الاصطناعي الهندسية (Actionable Engineering Recommendations)**: 2-3 خطوات عملية للمهندسين.\n"
+            "Keep the report direct, high-value, and avoid fluff."
+        )
+
+        user_content = (
+            f"Here is the raw telemetry and log data from the Syntera Production Cluster for the last 24 hours ({today_str}):\n\n"
+            f"```json\n{json.dumps(telemetry_data, indent=2, ensure_ascii=False)}\n```\n\n"
+            "Please analyze this data and generate the comprehensive Daily Operations Report."
+        )
+
+        payload = {
+            "model": AI_MODEL,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ],
+            "max_tokens": 3000,
+            "temperature": 0.2
+        }
+
+        headers = {
+            "Authorization": f"Bearer {AI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        status, resp_text = post_json(f"{AI_BASE_URL}/chat/completions", payload, headers=headers, timeout=120)
+        if status == 200:
+            try:
+                res_obj = json.loads(resp_text)
+                return res_obj["choices"][0]["message"]["content"]
+            except Exception as e:
+                print(f"[ERROR] Failed parsing AI response: {e}", file=sys.stderr)
+                return None
+        else:
+            print(f"[ERROR] AI completion failed with status {status}: {resp_text}", file=sys.stderr)
+            return None
+
+    def post_to_discord(report_text, telemetry):
+        if not DISCORD_WEBHOOK:
+            print("[WARN] No Discord Webhook configured. Printing report to stdout:")
+            print(report_text)
+            return
+
+        print("[INFO] Posting report to Discord webhook...")
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        # Determine embed color
+        has_oom = len(telemetry.get("oom_killed", [])) > 0
+        has_restarts = len(telemetry.get("pod_restarts", [])) > 0
+        color = 5793266 # Green
+        if has_oom:
+            color = 15548997 # Red
+        elif has_restarts or len(telemetry.get("pvc_pressure", [])) > 0:
+            color = 16776960 # Yellow
+
+        # Discord limit is 4096 chars per embed description.
+        # If longer, split into parts.
+        chunks = []
+        max_chunk = 3800
+        cur = report_text
+        while cur:
+            if len(cur) <= max_chunk:
+                chunks.append(cur)
+                break
+            idx = cur.rfind("\n\n", 0, max_chunk)
+            if idx == -1:
+                idx = cur.rfind("\n", 0, max_chunk)
+            if idx == -1:
+                idx = max_chunk
+            chunks.append(cur[:idx])
+            cur = cur[idx:].strip()
+
+        for i, chunk in enumerate(chunks):
+            title = f"📊 تقرير العمليات اليومي لكلاستر الـ Production ({today_str})"
+            if len(chunks) > 1:
+                title += f" [الجزء {i+1}/{len(chunks)}]"
+
+            payload = {
+                "username": "Syntera AI Ops Reporter",
+                "embeds": [
+                    {
+                        "title": title,
+                        "description": chunk,
+                        "color": color,
+                        "footer": {
+                            "text": f"Syntera Autonomous SRE • Model: {AI_MODEL} • Production Cluster"
+                        },
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }
+                ]
+            }
+
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SynteraOps/1.0"
+            }
+            status, _ = post_json(DISCORD_WEBHOOK, payload, headers=headers, timeout=20)
+            if status in (200, 204):
+                print(f"[INFO] Successfully posted part {i+1} to Discord.")
+            else:
+                print(f"[ERROR] Failed posting to Discord (status {status})", file=sys.stderr)
+            time.sleep(1)
+
+    def main():
+        print("=== Syntera AI Daily Ops Reporter Started ===")
+        telemetry = collect_telemetry()
+        report = generate_ai_report(telemetry)
+        if report:
+            post_to_discord(report, telemetry)
+            print("=== Daily Ops Report Finished Successfully ===")
+        else:
+            print("[ERROR] Could not generate AI report.", file=sys.stderr)
+            sys.exit(1)
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: syntera-ai-daily-ops-report
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: ops-reporter
+    app.kubernetes.io/part-of: monitoring
+spec:
+  # Run daily at 21:00 UTC (00:00 Cairo/Riyadh midnight)
+  schedule: "0 22 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/component: ops-reporter
+          annotations:
+            sidecar.istio.io/inject: "false"
+        spec:
+          serviceAccountName: ai-ops-reporter-sa
+          restartPolicy: OnFailure
+          containers:
+            - name: ops-reporter
+              image: python:3.12-alpine
+              command:
+                - python3
+                - /app/reporter.py
+              envFrom:
+                - secretRef:
+                    name: syntera-ai-ops-secrets
+              volumeMounts:
+                - name: script-vol
+                  mountPath: /app
+          volumes:
+            - name: script-vol
+              configMap:
+                name: syntera-ai-ops-script
+                defaultMode: 0755
